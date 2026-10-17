@@ -30,7 +30,7 @@ Parent="$OwnerParent/$NameParent"
 
 git remote remove Parent
 
-if [ "$Parent" != "null/null" ]; then
+if [ -n "$OwnerParent" ] && [ "$OwnerParent" != "null" ] && [ -n "$NameParent" ] && [ "$NameParent" != "null" ]; then
 	Parent="ssh://git@github.com/${Parent}"
 	Parent=$(\echo "$Parent" | \sed 's/\/$/\.git/')
 

@@ -38,7 +38,7 @@ Fn() {
 			git config Parent.Owner "$OwnerParent"
 		else
 			\echo "Could not determine Parent.Owner (repo might not be a fork)."
-			OwnerParent=""
+			OwnerParent="null"
 		fi
 	fi
 
@@ -51,7 +51,7 @@ Fn() {
 			git config Parent.Name "$NameParent"
 		else
 			\echo "Could not determine Parent.Name (repo might not be a fork)."
-			NameParent=""
+			NameParent="null"
 		fi
 	fi
 
