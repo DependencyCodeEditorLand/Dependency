@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# post-commit - sync submodule working trees to the gitlinks that pre-commit
+# just pinned, so `git submodule status` never shows '+'.
+#
+# pre-commit pins every gitlink to the remote default-branch tip (fetch-first,
+# never a local-only commit). If the local checkout lags behind that tip,
+# `git submodule status` shows '+' until the checkout catches up. This hook
+# closes the loop: after the commit lands, update each submodule to the remote
+# tip with --merge (merges into the submodule's current branch - local commits
+# are preserved; a dirty working tree refuses the merge and is left untouched,
+# no content is ever lost).
+#
+# Graceful: failures (offline, busy submodule) print a warning and exit 0 -
+# the next checkout/merge/commit converges.
+set -u
+
+cd "$(git rev-parse --show-toplevel)" || exit 0
+
+if ! git submodule update --init --remote --recursive --merge 2>/dev/null; then
+  echo "post-commit: submodule update failed (offline or dirty submodule?) - checkouts left as-is, next commit/checkout will converge" >&2
+fi
+
+exit 0

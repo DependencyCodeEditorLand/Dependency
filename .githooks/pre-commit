@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# pre-commit - keep every submodule gitlink pinned to its remote default-branch tip.
+#
+# Why this exists: an auto-committer "save" can record a gitlink to a commit
+# that exists only locally and was never pushed (a phantom - GitHub refuses to
+# serve it: "upload-pack: not our ref"); the pin goes stale because
+# `ignore = all` hides gitlink drift and no later commit touches the path.
+# This hook makes the bump automatic AND safe:
+#
+#   * fetch-first  - the pin is taken from the remote tip (origin/<default-branch>
+#                    resolved via `ls-remote --symref`), so a commit that is not
+#                    on the remote can never be recorded again.
+#   * submodule working trees are never touched (no checkout, no reset, no
+#                    update) - local content stays where it is.
+#   * `ignore = all` is respected: the gitlink is staged with
+#                    `git update-index --cacheinfo` (plain `git add` is swallowed).
+#   * graceful degradation - offline or a busy index just leaves the gitlink
+#                    unchanged and prints a warning; the next commit converges.
+set -u
+
+# Hooks can be invoked with cwd anywhere; always operate from the repo root.
+cd "$(git rev-parse --show-toplevel)" || exit 0
+
+# Branch guard: refuse commits on a detached HEAD (dangling-commit source).
+if ! git symbolic-ref -q HEAD >/dev/null 2>&1; then
+  echo "pre-commit: refusing commit on detached HEAD" >&2
+  exit 1
+fi
+
+gitmodules="$(git rev-parse --show-toplevel)/.gitmodules"
+[ -f "$gitmodules" ] || exit 0
+
+bump_gitlink() {
+  p="$1"
+  u="$2"
+  if [ ! -d "$p/.git" ] && [ ! -f "$p/.git" ]; then
+    echo "pre-commit: $p: not initialized, skipping" >&2
+    return 0
+  fi
+  head_sha="$(git -C "$p" rev-parse --verify -q HEAD 2>/dev/null)" || {
+    echo "pre-commit: $p: no HEAD, skipping" >&2
+    return 0
+  }
+  rurl="$(git -C "$p" remote get-url origin 2>/dev/null)" || rurl="$u"
+  branch="$(git -C "$p" ls-remote --symref "$rurl" HEAD 2>/dev/null | head -1 | awk '{print $2}')"
+  branch="${branch#refs/heads/}"
+  if [ -z "$branch" ]; then
+    echo "pre-commit: $p: cannot resolve default branch, gitlink unchanged" >&2
+    return 0
+  fi
+  if ! git -C "$p" fetch --quiet "$rurl" "$branch" 2>/dev/null; then
+    echo "pre-commit: $p: fetch failed, gitlink unchanged" >&2
+    return 0
+  fi
+  tip="$(git -C "$p" rev-parse --verify -q FETCH_HEAD 2>/dev/null)" || return 0
+  old="$(git ls-files -s -- "$p" 2>/dev/null | awk '{print $2}')"
+  [ "$old" = "$tip" ] && return 0
+  if [ "$head_sha" != "$tip" ]; then
+    echo "pre-commit: $p: working tree at $head_sha (not the remote tip) - pinning $tip; push local commits to have them referenced" >&2
+  fi
+  if git update-index --cacheinfo "160000,$tip,$p" 2>/dev/null; then
+    echo "pre-commit: $p: gitlink $old -> $tip" >&2
+  else
+    echo "pre-commit: $p: index busy (external committer?), gitlink unchanged this run" >&2
+  fi
+}
+
+name=""
+path=""
+url=""
+while IFS= read -r line || [ -n "$line" ]; do
+  case "$line" in
+    '[submodule '*)
+      name="${line#\[submodule \"}"
+      name="${name%\"\]}"
+      path=""
+      url=""
+      ;;
+    'path = '*)
+      path="${line#path = }"
+      path="$(printf '%s' "$path" | tr -d '\r')"
+      ;;
+    'url = '*)
+      url="${line#url = }"
+      url="$(printf '%s' "$url" | tr -d '\r')"
+      ;;
+  esac
+  if [ -n "$path" ] && [ -n "$url" ]; then
+    bump_gitlink "$path" "$url"
+    path=""
+    url=""
+  fi
+done < "$gitmodules"
+
+exit 0
